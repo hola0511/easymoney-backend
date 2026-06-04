@@ -10,9 +10,21 @@ import { bankStatementRoutes } from "./interface/routes/bankStatement.routes";
 
 const app = express();
 
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://https://easymoney-frontend-rho.vercel.app.vercel.app"
+];
+
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error("No permitido por CORS"));
+    },
     credentials: true,
   })
 );
