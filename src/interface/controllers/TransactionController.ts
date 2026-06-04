@@ -1,41 +1,41 @@
-import { Request, Response } from 'express';
-import { Prisma } from '@prisma/client';
-import { prisma } from '../../infrastructure/database/prisma';
-import { AppError } from '../../shared/errors/AppError';
+import { Request, Response } from "express";
+import { TransactionType } from "@prisma/client";
+import { prisma } from "../../infrastructure/database/prisma";
 
 export class TransactionController {
   async index(req: Request, res: Response) {
     const page = Number(req.query.page || 1);
     const limit = Number(req.query.limit || 10);
+    const queryType = req.query.type ? String(req.query.type) : undefined;
     const skip = (page - 1) * limit;
-    const { type, categoryId, search, startDate, endDate } = req.query;
 
-    const where: Prisma.TransactionWhereInput = {
+    const type =
+      queryType === "INCOME"
+        ? TransactionType.INCOME
+        : queryType === "EXPENSE"
+          ? TransactionType.EXPENSE
+          : undefined;
+
+    const where = {
       userId: req.user!.id,
-      ...(type ? { type: type as 'INCOME' | 'EXPENSE' } : {}),
-      ...(categoryId ? { categoryId: String(categoryId) } : {}),
-      ...(search
-        ? { description: { contains: String(search), mode: 'insensitive' } }
-        : {}),
-      ...((startDate || endDate)
-        ? {
-            date: {
-              ...(startDate ? { gte: new Date(String(startDate)) } : {}),
-              ...(endDate ? { lte: new Date(String(endDate)) } : {}),
-            },
-          }
-        : {}),
+      ...(type ? { type } : {}),
     };
 
     const [transactions, total] = await Promise.all([
       prisma.transaction.findMany({
         where,
-        include: { category: true },
-        orderBy: { date: 'desc' },
+        include: {
+          category: true,
+        },
+        orderBy: {
+          date: "desc",
+        },
         skip,
         take: limit,
       }),
-      prisma.transaction.count({ where }),
+      prisma.transaction.count({
+        where,
+      }),
     ]);
 
     return res.json({
@@ -50,12 +50,24 @@ export class TransactionController {
   }
 
   async show(req: Request, res: Response) {
+    const id = String(req.params.id);
+
     const transaction = await prisma.transaction.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
-      include: { category: true },
+      where: {
+        id,
+        userId: req.user!.id,
+      },
+      include: {
+        category: true,
+      },
     });
 
-    if (!transaction) throw new AppError('Transacción no encontrada', 404);
+    if (!transaction) {
+      return res.status(404).json({
+        message: "Transacción no encontrada",
+      });
+    }
+
     return res.json(transaction);
   }
 
@@ -63,10 +75,17 @@ export class TransactionController {
     const { description, amount, type, date, categoryId } = req.body;
 
     const category = await prisma.category.findFirst({
-      where: { id: categoryId, userId: req.user!.id, type },
+      where: {
+        id: String(categoryId),
+        userId: req.user!.id,
+      },
     });
 
-    if (!category) throw new AppError('Categoría no encontrada o no coincide con el tipo', 400);
+    if (!category) {
+      return res.status(404).json({
+        message: "Categoría no encontrada",
+      });
+    }
 
     const transaction = await prisma.transaction.create({
       data: {
@@ -74,54 +93,90 @@ export class TransactionController {
         amount,
         type,
         date: new Date(date),
-        categoryId,
         userId: req.user!.id,
+        categoryId: String(categoryId),
       },
-      include: { category: true },
+      include: {
+        category: true,
+      },
     });
 
     return res.status(201).json(transaction);
   }
 
   async update(req: Request, res: Response) {
-    const transaction = await prisma.transaction.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+    const id = String(req.params.id);
+    const { description, amount, type, date, categoryId } = req.body;
+
+    const transactionExists = await prisma.transaction.findFirst({
+      where: {
+        id,
+        userId: req.user!.id,
+      },
     });
 
-    if (!transaction) throw new AppError('Transacción no encontrada', 404);
+    if (!transactionExists) {
+      return res.status(404).json({
+        message: "Transacción no encontrada",
+      });
+    }
 
-    if (req.body.categoryId || req.body.type) {
+    if (categoryId) {
       const category = await prisma.category.findFirst({
         where: {
-          id: req.body.categoryId || transaction.categoryId,
+          id: String(categoryId),
           userId: req.user!.id,
-          type: req.body.type || transaction.type,
         },
       });
 
-      if (!category) throw new AppError('Categoría no encontrada o no coincide con el tipo', 400);
+      if (!category) {
+        return res.status(404).json({
+          message: "Categoría no encontrada",
+        });
+      }
     }
 
-    const updatedTransaction = await prisma.transaction.update({
-      where: { id: req.params.id },
-      data: {
-        ...req.body,
-        ...(req.body.date ? { date: new Date(req.body.date) } : {}),
+    const transaction = await prisma.transaction.update({
+      where: {
+        id,
       },
-      include: { category: true },
+      data: {
+        description,
+        amount,
+        type,
+        date: new Date(date),
+        categoryId: String(categoryId),
+      },
+      include: {
+        category: true,
+      },
     });
 
-    return res.json(updatedTransaction);
+    return res.json(transaction);
   }
 
   async delete(req: Request, res: Response) {
-    const transaction = await prisma.transaction.findFirst({
-      where: { id: req.params.id, userId: req.user!.id },
+    const id = String(req.params.id);
+
+    const transactionExists = await prisma.transaction.findFirst({
+      where: {
+        id,
+        userId: req.user!.id,
+      },
     });
 
-    if (!transaction) throw new AppError('Transacción no encontrada', 404);
+    if (!transactionExists) {
+      return res.status(404).json({
+        message: "Transacción no encontrada",
+      });
+    }
 
-    await prisma.transaction.delete({ where: { id: req.params.id } });
+    await prisma.transaction.delete({
+      where: {
+        id,
+      },
+    });
+
     return res.status(204).send();
   }
 }
